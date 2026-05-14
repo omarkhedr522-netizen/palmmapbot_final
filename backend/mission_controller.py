@@ -42,7 +42,8 @@ class MissionController:
 
     def survey_farm(self, waypoints: list[dict], gps_lat: float = 29.203451, gps_lon: float = 25.519833):
         """
-        Follow waypoints and simulate tree mapping at each waypoint.
+        Follow waypoints only.
+        Real tree detections should be added separately from the camera detector.
         """
         if self.robot_state.current_mission_id is None:
             raise ValueError("No active mission.")
@@ -53,17 +54,9 @@ class MissionController:
             print(f"Survey waypoint {i}/{len(waypoints)}")
             self.navigation_manager.go_to_pose(wp["x"], wp["y"], wp["yaw"])
 
-            result = self.tree_mapper.process_tree_detection(
-                robot_x=wp["x"],
-                robot_y=wp["y"],
-                robot_yaw_rad=wp["yaw"],
-                gps_lat=gps_lat,
-                gps_lon=gps_lon,
-                mission_id=self.robot_state.current_mission_id,
-                confidence=0.90
-            )
-
-            print("Mapped tree:", result["backend_result"])
+            # Do NOT create fake detections here.
+            # Real detections should only be logged when the external camera
+            # and detector actually detect a palm tree.
 
         print("Survey completed.")
 
@@ -121,3 +114,32 @@ class MissionController:
 
     def get_state(self):
         return self.robot_state.to_dict()
+
+    def record_tree_detection(
+        self,
+        robot_x: float,
+        robot_y: float,
+        robot_yaw_rad: float,
+        gps_lat: float,
+        gps_lon: float,
+        confidence: float
+    ):
+        """
+        Record a real palm-tree detection during an active mission.
+        """
+        if self.robot_state.current_mission_id is None:
+            print("Ignoring detection: no active mission.")
+            return None
+
+        result = self.tree_mapper.process_tree_detection(
+            robot_x=robot_x,
+            robot_y=robot_y,
+            robot_yaw_rad=robot_yaw_rad,
+            gps_lat=gps_lat,
+            gps_lon=gps_lon,
+            mission_id=self.robot_state.current_mission_id,
+            confidence=confidence
+        )
+
+        print("Mapped real tree:", result["backend_result"])
+        return result

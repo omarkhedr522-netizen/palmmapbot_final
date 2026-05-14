@@ -1,0 +1,156 @@
+Requirements and Raspberry Pi Setup Notes
+PalmMapBot backend comparison deliverable - generated 9 May 2026
+Sensitive note: the Raspberry Pi credentials below were provided by the project owner for local deployment documentation only. Do not commit this file, paste these credentials in public chats, or upload them to GitHub.
+
+1. Raspberry Pi access data
+
+Item | Value | Notes
+Device | Raspberry Pi | Local project device.
+Username | eslam_samir | Provided for Raspberry Pi login/setup.
+Password | Islam-13715 | Sensitive credential. Keep private.
+Dashboard URL after running app | http://<raspberry-pi-ip>:5000 | The Flask app runs on host 0.0.0.0 and port 5000.
+
+2. Final recommended runtime requirements
+
+For the Raspberry Pi backend/dashboard, do not blindly install the full exported requirements.txt. It is a large UTF-16 environment snapshot and includes training/desktop packages that are not needed for the live backend. Use a small runtime requirements file instead.
+# requirements-raspi-runtime.txt
+Flask
+numpy
+opencv-python-headless
+pyserial
+smbus2
+ultralytics
+ncnn
+requests
+pandas
+Notes about this list:
+Flask is required because dashboard/app.py is a Flask web server.
+numpy and OpenCV are required for camera frames, JPEG encoding, placeholder images, and AI frame processing.
+opencv-python-headless is preferred on Raspberry Pi for a web dashboard because the code does not use cv2.imshow(). Use opencv-python only if a desktop GUI/OpenCV display window is needed.
+pyserial is required by sensors/gps_reader.py.
+smbus2 is required by sensors/lidar_reader.py.
+ultralytics is required by dashboard/app.py to load YOLO.
+ncnn should be installed because the modified model is stored as an NCNN export and the included model_ncnn.py imports ncnn. If Ultralytics loads the NCNN folder without a separate ncnn install, this can be left installed harmlessly.
+requests and pandas are not core to the live camera/GPS/LiDAR loop, but they are safe to keep because existing project scripts commonly use them.
+
+3. Libraries to add, keep, remove, or treat as optional
+
+Decision | Library / package | Reason
+Add / keep | Flask | Needed by dashboard/app.py.
+Add / keep | opencv-python-headless or opencv-python | Needed by camera_reader.py and dashboard frame processing. Headless is preferred for Raspberry Pi web deployment.
+Add / keep | numpy | Needed for frame decoding, placeholder frames, and model input handling.
+Add / keep | pyserial | Needed for GPS serial reading on /dev/ttyACM0.
+Add / keep | smbus2 | Needed for TF-Luna I2C reading.
+Add / keep | ultralytics | Needed for YOLO model loading/inference from dashboard/app.py.
+Add / keep if NCNN errors appear | ncnn | Needed by the NCNN helper and may be needed by NCNN backend runtime.
+Optional | pandas | Useful for project data/export scripts, not directly required by dashboard/app.py.
+Optional | requests | Useful for helper/API scripts, not directly required by current sensor loop.
+Remove from runtime | PyQt5, PyQt5-Qt5, PyQt5_sip | The modified backend is Flask/browser based, not a PyQt app. These were commented out in modified requirements.txt.
+Remove from runtime | labelImg, kaggle, kagglesdk | Dataset/training utilities, not needed on the Raspberry Pi runtime backend.
+Remove from runtime unless using tests/research scripts | matplotlib, scipy, polars, fastapi, uvicorn | Not needed by the modified Flask dashboard loop.
+Avoid on Pi runtime if possible | torch, torchvision | Heavy packages; the modified model is NCNN-format to reduce runtime burden. Keep only if Ultralytics on your device explicitly requires them.
+Remove unless parser is rewritten | pynmea2 | Listed in requirements-essential.txt but the current gps_reader.py manually parses NMEA and does not import pynmea2.
+
+4. Installation steps on Raspberry Pi
+
+Run these from the project folder on the Raspberry Pi. Adjust the virtual environment name if you prefer a different one.
+cd ~/palmmapbot
+python3 -m venv vision313
+source vision313/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+
+# Create a clean runtime requirements file instead of using the huge full requirements.txt
+cat > requirements-raspi-runtime.txt <<'EOF'
+Flask
+numpy
+opencv-python-headless
+pyserial
+smbus2
+ultralytics
+ncnn
+requests
+pandas
+EOF
+
+pip install -r requirements-raspi-runtime.txt
+python create_db.py
+python dashboard/app.py
+
+5. System-level packages and Raspberry Pi interfaces
+
+sudo apt update
+sudo apt install -y python3-venv python3-pip i2c-tools libgl1 libglib2.0-0
+
+# Enable I2C for the TF-Luna LiDAR
+sudo raspi-config
+# Interface Options -> I2C -> Enable
+
+# Check I2C devices
+sudo i2cdetect -y 1
+
+# Check camera device
+ls /dev/video*
+
+# Check GPS serial device
+ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+LiDAR code assumes I2C bus 1 and TF-Luna address 0x10. If i2cdetect shows a different address or no device, fix wiring/interface settings before running the dashboard.
+Camera code assumes the camera appears as /dev/video0. If the external USB camera appears as /dev/video1, update sensors/camera_reader.py or add a configurable environment variable later.
+GPS code assumes /dev/ttyACM0 at 9600 baud. If the GPS appears as /dev/ttyUSB0, update GPSReader(port="/dev/ttyUSB0").
+The Flask server binds to 0.0.0.0:5000, so another computer on the same network can open http://<raspberry-pi-ip>:5000.
+
+6. Runtime environment variables
+
+Variable | Default | When to change it
+PALM_CONF_TH | 0.25 | Increase it if false detections happen; decrease it if the model misses palms.
+PALM_LOG_COOLDOWN | 4.0 | Increase it if duplicate database logs happen while the camera sees the same tree.
+AI_INTERVAL | 0.1 | Increase it on weak hardware to reduce CPU load; decrease it for faster inference checks.
+MJPEG_FPS | 8.0 | Increase for smoother browser stream; decrease if browser/server becomes laggy.
+
+# Example: run with safer logging and smoother stream
+export PALM_CONF_TH=0.35
+export PALM_LOG_COOLDOWN=6
+export AI_INTERVAL=0.15
+export MJPEG_FPS=10
+python dashboard/app.py
+
+7. Model files that must stay in place
+
+Keep the folder name exactly as models/palm_tree_detector_ncnn_model because dashboard/app.py points to that path.
+Required NCNN model assets: model.ncnn.param, model.ncnn.bin, and metadata.yaml.
+The metadata identifies one class: palm_tree.
+Do not rename the model folder unless MODEL_PATH in dashboard/app.py is updated too.
+
+8. Important installation considerations
+
+The current requirements.txt and requirements-lite.txt are UTF-16 encoded. Some pip workflows expect UTF-8, so create a fresh UTF-8 requirements-raspi-runtime.txt for deployment.
+Avoid copying virtual environment folders between machines. Recreate the venv on the Raspberry Pi and reinstall packages there.
+Do not commit palm_env/, vision313/, __pycache__/, *.pyc, or data/palms.db.
+If OpenCV pip installation fails on the Raspberry Pi, try installing system OpenCV instead, then remove opencv-python-headless from the pip runtime file.
+If Ultralytics crashes with illegal instruction or backend errors, keep the NCNN model path and try the smallest possible runtime dependency set. Avoid full torch/torchvision unless absolutely required on that device.
+Run python -m py_compile on changed files after edits to catch syntax mistakes before launching the dashboard.
+
+9. Quick health checks after installation
+
+source vision313/bin/activate
+python -m py_compile dashboard/app.py backend/mission_controller.py sensors/*.py
+python - <<'PY'
+import cv2, numpy, flask, serial, smbus2
+print("Core imports OK")
+PY
+python dashboard/app.py
+Open /api/sensors to confirm GPS/LiDAR JSON is returned.
+Open /api/ai to confirm model status and latest AI state.
+Open /video_feed to confirm MJPEG streaming.
+Start a mission before expecting detections to be saved in the database.
+A detection will not be logged unless GPS has a valid fix and the cooldown has passed.
+
+10. Final deployment checklist
+
+Check | Expected result
+Database initialized | data/palms.db exists after running python create_db.py.
+Camera visible | /dev/video0 exists and dashboard camera panel shows frames.
+GPS visible | /dev/ttyACM0 or corrected port exists and /api/sensors reports connected/fix status.
+LiDAR visible | sudo i2cdetect -y 1 shows TF-Luna address 0x10 and /api/sensors reports distance.
+Model path valid | models/palm_tree_detector_ncnn_model exists with NCNN files.
+Mission active | Start Mission is clicked before trying to log tree detections.
+Credentials protected | This document and the Pi password are not uploaded to GitHub.

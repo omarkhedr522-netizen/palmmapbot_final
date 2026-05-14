@@ -1,0 +1,131 @@
+Modifications Report
+PalmMapBot backend comparison deliverable - generated 9 May 2026
+Comparison basis: the uploaded modified archive was compared against its Git baseline/HEAD for the linked PalmMapBot repository. The working tree contains local backend modifications on top of commit 5b12bd5. Python syntax compilation was also checked for the changed Python files and passed.
+
+1. Executive summary
+
+The original dashboard was mainly a Flask database/map page with mission buttons. The modified version turns it into a live backend dashboard with sensors, camera streaming, AI inference status, and real detection logging.
+Fake/simulated tree detections were removed from the mission path. Tree detections are now recorded only when the camera/YOLO pipeline detects a palm tree during an active mission and a GPS fix is available.
+The Raspberry Pi hardware layer was added through a new sensors package: USB/V4L2 camera, GPS serial reader, and TF-Luna LiDAR I2C reader.
+A new NCNN-format palm tree detector model was added, and the dashboard now points to models/palm_tree_detector_ncnn_model instead of the original .pt-only flow.
+The requirements were adjusted by commenting out PyQt5 packages and adding separate lightweight/essential requirement files for Raspberry Pi deployment.
+
+2. File-level change summary
+
+File / folder | Status | What changed | Backend impact
+backend/mission_controller.py | Modified | Removed automatic fake tree creation inside survey_farm(); added record_tree_detection(). | Prevents database pollution and allows real detections from the AI/camera pipeline to be logged cleanly.
+dashboard/app.py | Modified heavily | Added OpenCV, NumPy, threading, atexit, optional sensors, optional Ultralytics loading, MJPEG video feed, AI worker, API routes, sensor panels, and real mission logging. | This is the main integration point that makes the backend work with camera + GPS + LiDAR + detector.
+requirements.txt | Modified | PyQt5, PyQt5-Qt5, and PyQt5_sip were commented out. | Avoids installing unused GUI packages for a Flask-based backend/dashboard deployment.
+sensors/__init__.py | Added | Marks sensors as an importable Python package. | Allows dashboard/app.py to import sensor modules.
+sensors/camera_reader.py | Added | Reads /dev/video0 through OpenCV/V4L2 at 1280x720, 30 FPS, MJPG, stores latest JPEG in a background thread. | Provides camera frames for AI inference and MJPEG streaming.
+sensors/gps_reader.py | Added | Reads GPS from /dev/ttyACM0 at 9600 baud, parses GGA/RMC NMEA sentences manually, stores fix, latitude, longitude, satellites, altitude, speed, heading. | Provides GPS coordinates needed before tree detections can be recorded.
+sensors/lidar_reader.py | Added | Reads TF-Luna over I2C bus 1 at address 0x10, polling distance, signal strength, and temperature. | Adds live LiDAR telemetry to the dashboard.
+models/palm_tree_detector_ncnn_model/ | Added | Includes metadata.yaml, model.ncnn.bin, model.ncnn.param, and model_ncnn.py. | Adds Raspberry Pi-friendly exported model assets for palm detection.
+requirements-essential.txt | Added | Small dependency list: Flask, OpenCV, NumPy, pandas, requests, pyserial, pynmea2, smbus2. | A lighter install target than the full requirements file.
+requirements-lite.txt | Added | A copy of the full requirements with PyQt5 commented out. | Keeps the full environment list but removes PyQt GUI packages.
+tf-constraints.txt | Added | Contains flatbuffers>=24,<100. | Appears intended for TensorFlow/TFLite installation constraints, but is not used by the current Flask dashboard code.
+
+3. Mission controller changes
+
+Original behavior: pressing Start Mission triggered hard-coded survey waypoints, automatically simulated a tree detection at every waypoint, returned home, and completed the mission. This made the database fill with fake detections even when no real palm was detected.
+Modified behavior: survey_farm() now only follows waypoint positions. It no longer calls tree_mapper.process_tree_detection() by itself. A new record_tree_detection() method was added for real detections only.
+
+Changed logic | Original | Modified
+survey_farm() | Followed waypoints and created simulated detections with confidence 0.90. | Follows waypoints only; does not create fake detections.
+Detection logging | Tied to waypoint simulation. | Moved to record_tree_detection(), which requires an active mission.
+Database effect | Every survey waypoint could create/merge a tree record. | Tree records are created only when the detector confirms a palm and GPS is valid.
+
+New backend method added:
+record_tree_detection(robot_x, robot_y, robot_yaw_rad, gps_lat, gps_lon, confidence)
+
+Purpose:
+- checks that a mission is active
+- calls tree_mapper.process_tree_detection()
+- returns the mapping result
+- prints "Mapped real tree" instead of "Mapped tree"
+
+4. Dashboard/backend integration changes
+
+DB_PATH changed from the relative string data/palms.db to os.path.join(BASE_DIR, "data", "palms.db"), making database access more stable when running the app from different working directories.
+Sensor imports are wrapped in try/except blocks. If LiDAR, GPS, or camera imports fail, the dashboard still starts and returns fallback JSON with an error message instead of crashing.
+Ultralytics import is optional. If YOLO cannot be imported, the app reports AI unavailable instead of stopping the backend.
+The model path now points to models/palm_tree_detector_ncnn_model.
+The dashboard maintains latest_ai state containing model load status, palm detection flag, confidence, logging state, GPS state, last analysis time, last logged detection time, and model errors.
+A background AI thread repeatedly grabs the latest camera frame, runs inference, annotates frames, updates the dashboard, and logs detections when allowed.
+An MJPEG endpoint /video_feed streams the latest annotated frame to the browser.
+The Start Mission button now only starts a mission; it no longer automatically surveys, returns home, and completes. A separate Complete Mission button was added.
+
+5. New/changed HTTP routes
+
+Route | Method | Purpose
+/start_mission | POST | Starts Dashboard Survey Mission and keeps it active for real detections.
+/complete_mission | POST | Completes the active mission manually. Newly added.
+/abort_mission | POST | Aborts the mission. Existing route retained.
+/return_home | POST | Returns robot state to home pose. Existing route retained.
+/api/state | GET | Returns robot/controller state. Existing route retained.
+/api/summary | GET | Returns tree/detection/mission counts. Newly exposed as JSON.
+/api/trees | GET | Returns tree rows for the map. Newly exposed as JSON.
+/api/detections | GET | Returns recent detection rows. Newly exposed as JSON.
+/api/missions | GET | Returns mission rows. Newly exposed as JSON.
+/api/sensors | GET | Returns latest LiDAR and GPS readings. Newly added.
+/api/ai | GET | Returns latest detector/model/logging state. Newly added.
+/video_feed | GET | Streams MJPEG frames to the dashboard. Newly added.
+
+6. AI detection and logging flow
+
+Camera frame from sensors/camera_reader.py
+    -> dashboard/app.py analyze_latest_frame()
+        -> load_yolo_model() using models/palm_tree_detector_ncnn_model
+        -> model(frame, conf=PALM_CONF_TH)
+        -> update latest_ai status and annotated MJPEG frame
+        -> if palm detected: maybe_log_detection(confidence)
+            -> require cooldown to pass
+            -> require active mission
+            -> require GPS fix + latitude + longitude
+            -> controller.record_tree_detection(...)
+                -> tree_mapper.process_tree_detection(...)
+                -> database stores/updates tree + detection
+
+Runtime variable | Default | Role
+PALM_CONF_TH | 0.25 | Minimum model confidence for detection.
+PALM_LOG_COOLDOWN | 4.0 seconds | Minimum time between database logs to avoid duplicate detections.
+AI_INTERVAL | 0.1 seconds | Delay between AI inference cycles.
+MJPEG_FPS | 8.0 FPS | Frame rate for browser MJPEG stream.
+
+7. Sensor module details
+
+Module | Default hardware path/settings | Returned data
+camera_reader.py | /dev/video0, V4L2, 1280x720, 30 FPS, MJPG | Latest JPEG frame, running/connected/error status.
+gps_reader.py | /dev/ttyACM0, 9600 baud, timeout 1 second | connected, fix, fix_quality, latitude, longitude, altitude_m, satellites, speed_knots, speed_kmh, heading, UTC time, date, raw NMEA sentence, timestamp, error.
+lidar_reader.py | I2C bus 1, TF-Luna address 0x10, poll interval 0.1 s | connected, distance_cm, strength, temperature_c, timestamp, error.
+
+8. Requirements/library changes observed
+
+The only direct change inside requirements.txt is that the PyQt5 packages were commented out. The full file is still UTF-16 encoded and still includes many training/development dependencies, so it should not be treated as the clean final Raspberry Pi runtime file.
+
+Package(s) | Original state | Modified state | Reason
+PyQt5, PyQt5-Qt5, PyQt5_sip | Active in requirements.txt | Commented out | Not needed for Flask web dashboard; can cause unnecessary heavy GUI installs on Raspberry Pi.
+Flask | Not clearly present in full requirements.txt | Added in requirements-essential.txt | Required by dashboard/app.py.
+pyserial | Not in full requirements.txt | Added in requirements-essential.txt | Required by sensors/gps_reader.py.
+smbus2 | Not in full requirements.txt | Added in requirements-essential.txt | Required by sensors/lidar_reader.py.
+pynmea2 | Not used by current code | Listed in requirements-essential.txt | Can be removed unless future GPS parsing is rewritten to use it.
+opencv-python + numpy | Present in full requirements.txt | Also needed by modified dashboard | Required for camera capture, JPEG encoding, placeholder frames, and AI frame handling.
+ultralytics | Present in full requirements.txt | Still needed | Used by dashboard/app.py to load and run the detector.
+ncnn | Not listed | Model helper imports it; runtime may need it for NCNN backend | Should be installed if Ultralytics reports NCNN backend/import errors.
+
+9. Files/folders that should not be committed
+
+palm_env/ and vision313/ virtual environments are present in the archive but should stay ignored and should not be committed.
+__pycache__/ and *.pyc files are generated cache files and should not be committed.
+data/palms.db is ignored. Keep it local unless a sample/demo database is intentionally needed.
+Credentials must not be committed to GitHub. Keep them in a private deployment note or environment variables.
+
+10. Unchanged backend areas
+
+No changes were detected in backend/tree_mapper.py, backend/tree_manager.py, backend/mission_manager.py, backend/navigation_manager.py, backend/robot_state.py, or the database schema creation file.
+No changes were detected in the original detection scripts such as detection/detect_tree.py and detection/trigger_and_assign.py.
+No test files were modified.
+
+11. Practical conclusion
+
+The backend now works as a real hardware-aware Flask backend instead of a simulation-only dashboard. The most important functional change is the separation between mission movement and tree detection logging. A mission can be started and kept active, while the camera/AI/GPS pipeline records tree detections only when real conditions are satisfied.
