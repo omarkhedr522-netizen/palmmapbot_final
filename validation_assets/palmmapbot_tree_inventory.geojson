@@ -1,0 +1,138 @@
+{
+  "type": "FeatureCollection",
+  "name": "palmmapbot_tree_inventory",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23512,
+          30.04521
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0001",
+        "status": "active",
+        "first_seen": "2026-05-20T09:05:23",
+        "last_seen": "2026-05-20T09:42:15",
+        "detection_count": 8,
+        "avg_confidence": 0.89
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23524,
+          30.04532
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0002",
+        "status": "active",
+        "first_seen": "2026-05-20T09:10:45",
+        "last_seen": "2026-05-20T09:38:52",
+        "detection_count": 6,
+        "avg_confidence": 0.92
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23538,
+          30.04545
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0003",
+        "status": "active",
+        "first_seen": "2026-05-20T09:15:12",
+        "last_seen": "2026-05-20T09:35:28",
+        "detection_count": 5,
+        "avg_confidence": 0.85
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23551,
+          30.04558
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0004",
+        "status": "active",
+        "first_seen": "2026-05-20T09:18:33",
+        "last_seen": "2026-05-20T09:33:41",
+        "detection_count": 7,
+        "avg_confidence": 0.91
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23565,
+          30.04571
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0005",
+        "status": "active",
+        "first_seen": "2026-05-20T09:22:08",
+        "last_seen": "2026-05-20T09:31:19",
+        "detection_count": 4,
+        "avg_confidence": 0.87
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23578,
+          30.04584
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0006",
+        "status": "active",
+        "first_seen": "2026-05-20T09:25:44",
+        "last_seen": "2026-05-20T09:29:55",
+        "detection_count": 3,
+        "avg_confidence": 0.83
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          31.23592,
+          30.04597
+        ]
+      },
+      "properties": {
+        "tree_id": "PALM-0007",
+        "status": "active",
+        "first_seen": "2026-05-20T09:28:19",
+        "last_seen": "2026-05-20T09:28:47",
+        "detection_count": 2,
+        "avg_confidence": 0.78
+      }
+    }
+  ]
+}

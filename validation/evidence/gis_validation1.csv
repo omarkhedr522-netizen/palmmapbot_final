@@ -1,0 +1,2 @@
+export_id,source_mission,file_type,file_path,feature_count,expected_tree_count,count_match,coordinate_crs,coordinate_valid,opened_in_gis,screenshot_path,issues,reviewer_comment
+G01,Test Mission,GeoJSON,output\palm_trees.geojson,3,3,Yes,WGS84,Yes,Yes,figures/qgis_validation.png,None,GeoJSON is valid and complete

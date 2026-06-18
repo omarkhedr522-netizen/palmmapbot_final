@@ -1,0 +1,11 @@
+tree_id,reference_x,reference_y,estimated_x,estimated_y,error_x,error_y,euclidean_error_m,reference_source,quality_grade
+T001,0.0,0.0,-0.043,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T002,8.5,0.0,8.457,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T003,17.0,0.0,16.957,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T004,25.5,0.0,25.457,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T005,34.0,0.0,33.957,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T006,42.5,0.0,42.457,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T007,51.0,0.0,50.957,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T008,59.5,0.0,59.457,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T009,68.0,0.0,67.957,-0.052,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation
+T010,0.0,9.0,-0.043,8.948,-0.043,-0.052,0.068,Simulated ground truth,A - simulated for validation

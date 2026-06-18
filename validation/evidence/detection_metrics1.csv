@@ -1,0 +1,2 @@
+model,dataset_split,num_images,palm_instances,precision,recall,f1,map_0.5,map_0.5:0.95,inference_ms,fps,weights_path,notes
+YOLOv8n-palm,val,20,20,0.6355,0.45,0.5269,0.5044,0.1318,108.4,9.2,models/palm_tree_detector.pt,Real validation results from PalmMapBot dataset (val split)

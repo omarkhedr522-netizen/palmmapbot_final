@@ -4,6 +4,7 @@ import sqlite3
 import atexit
 import time
 import threading
+import json
 
 import cv2
 import numpy as np
@@ -12,9 +13,12 @@ import numpy as np
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(BASE_DIR)
 
-from flask import Flask, jsonify, redirect, url_for, Response, render_template_string
+from flask import Flask, jsonify, redirect, url_for, Response, render_template_string, request
 
 from backend.controller_instance import controller
+
+# Import robot control modules for relay GPIO control
+from robot_control.relay_gpio_controller import RelayGPIOController, get_relay_controller, stop_all, cleanup_all
 
 # --- Optional sensor imports: keep dashboard alive even if a sensor stack fails ---
 LIDAR_IMPORT_ERROR = None
@@ -89,6 +93,35 @@ except Exception as e:
 
 DB_PATH = os.path.join(BASE_DIR, "data", "palms.db")
 MODEL_PATH = os.path.join(BASE_DIR, "models", "palm_tree_detector_ncnn_model")
+
+# Robot control state
+robot_state = {
+    "mode": "IDLE",  # IDLE, AUTO, MANUAL, STOPPED, ERROR, EMERGENCY_STOP
+    "mission_active": False,
+    "emergency_stop": False,
+    "last_command": "STOP",
+    "relay_status": "OFF",
+    "binary_tree_detected": False,
+    "binary_tree_confidence": 0.0,
+    "lidar_distance": None,
+    "lidar_valid": False,
+    "gps_valid": False,
+    "last_tree_id": None,
+    "error": None
+}
+
+# Relay controller instance
+_relay_ctrl = None
+
+def get_robot_relay_controller():
+    """Get or create robot relay controller."""
+    global _relay_ctrl
+    if _relay_ctrl is None:
+        try:
+            _relay_ctrl = RelayGPIOController()
+        except Exception as e:
+            robot_state["error"] = f"Relay controller init failed: {e}"
+    return _relay_ctrl
 
 PALM_CONF_TH = float(os.getenv("PALM_CONF_TH", "0.25"))
 PALM_LOG_COOLDOWN = float(os.getenv("PALM_LOG_COOLDOWN", "4.0"))
@@ -455,6 +488,204 @@ def api_sensors():
     })
 
 
+# Robot Control API Endpoints
+@app.route("/api/robot/status")
+def api_robot_status():
+    """Get current robot control status."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        robot_state["relay_status"] = relay_ctrl.get_status()
+    return jsonify(robot_state)
+
+
+@app.route("/api/mission/start", methods=["POST"])
+def api_mission_start():
+    """Start automatic mission."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["emergency_stop"] = False
+    robot_state["mission_active"] = True
+    robot_state["mode"] = "AUTO"
+    robot_state["last_command"] = "FORWARD"
+    if relay_ctrl:
+        relay_ctrl.forward()
+    robot_state["relay_status"] = "FORWARD"
+    return jsonify(robot_state)
+
+
+@app.route("/api/mission/stop", methods=["POST"])
+def api_mission_stop():
+    """Stop mission."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["mission_active"] = False
+    robot_state["mode"] = "STOPPED"
+    robot_state["last_command"] = "STOP"
+    robot_state["relay_status"] = "OFF"
+    return jsonify(robot_state)
+
+
+@app.route("/api/mission/emergency_stop", methods=["POST"])
+def api_mission_emergency_stop():
+    """Emergency stop - overrides everything."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["emergency_stop"] = True
+    robot_state["mission_active"] = False
+    robot_state["mode"] = "EMERGENCY_STOP"
+    robot_state["last_command"] = "STOP"
+    robot_state["relay_status"] = "OFF"
+    return jsonify(robot_state)
+
+
+@app.route("/api/mode/manual", methods=["POST"])
+def api_mode_manual():
+    """Switch to manual control mode."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["mission_active"] = False
+    robot_state["mode"] = "MANUAL"
+    robot_state["last_command"] = "STOP"
+    robot_state["relay_status"] = "OFF"
+    return jsonify(robot_state)
+
+
+@app.route("/api/mode/auto", methods=["POST"])
+def api_mode_auto():
+    """Switch to auto mode (ready, not moving)."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["mission_active"] = False
+    robot_state["mode"] = "IDLE"
+    robot_state["last_command"] = "STOP"
+    robot_state["relay_status"] = "OFF"
+    return jsonify(robot_state)
+
+
+@app.route("/api/manual/forward", methods=["POST"])
+def api_manual_forward():
+    """Manual forward - only works in MANUAL mode."""
+    if robot_state["mode"] != "MANUAL":
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Manual control is disabled. Switch to Manual Control first.",
+            "mode": robot_state["mode"]
+        }), 400
+    if robot_state["emergency_stop"]:
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Emergency stop is active. Reset first.",
+            "mode": robot_state["mode"]
+        }), 400
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.forward()
+    robot_state["last_command"] = "FORWARD"
+    robot_state["relay_status"] = "FORWARD"
+    return jsonify(robot_state)
+
+
+@app.route("/api/manual/backward", methods=["POST"])
+def api_manual_backward():
+    """Manual backward - only works in MANUAL mode."""
+    if robot_state["mode"] != "MANUAL":
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Manual control is disabled. Switch to Manual Control first.",
+            "mode": robot_state["mode"]
+        }), 400
+    if robot_state["emergency_stop"]:
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Emergency stop is active. Reset first.",
+            "mode": robot_state["mode"]
+        }), 400
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.backward()
+    robot_state["last_command"] = "BACKWARD"
+    robot_state["relay_status"] = "BACKWARD"
+    return jsonify(robot_state)
+
+
+@app.route("/api/manual/left", methods=["POST"])
+def api_manual_left():
+    """Manual left - only works in MANUAL mode."""
+    if robot_state["mode"] != "MANUAL":
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Manual control is disabled. Switch to Manual Control first.",
+            "mode": robot_state["mode"]
+        }), 400
+    if robot_state["emergency_stop"]:
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Emergency stop is active. Reset first.",
+            "mode": robot_state["mode"]
+        }), 400
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.left()
+    robot_state["last_command"] = "LEFT"
+    robot_state["relay_status"] = "LEFT"
+    return jsonify(robot_state)
+
+
+@app.route("/api/manual/right", methods=["POST"])
+def api_manual_right():
+    """Manual right - only works in MANUAL mode."""
+    if robot_state["mode"] != "MANUAL":
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Manual control is disabled. Switch to Manual Control first.",
+            "mode": robot_state["mode"]
+        }), 400
+    if robot_state["emergency_stop"]:
+        relay_ctrl = get_robot_relay_controller()
+        if relay_ctrl:
+            relay_ctrl.stop()
+        return jsonify({
+            "error": "Emergency stop is active. Reset first.",
+            "mode": robot_state["mode"]
+        }), 400
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.right()
+    robot_state["last_command"] = "RIGHT"
+    robot_state["relay_status"] = "RIGHT"
+    return jsonify(robot_state)
+
+
+@app.route("/api/manual/stop", methods=["POST"])
+def api_manual_stop():
+    """Manual stop - works in any mode."""
+    relay_ctrl = get_robot_relay_controller()
+    if relay_ctrl:
+        relay_ctrl.stop()
+    robot_state["last_command"] = "STOP"
+    robot_state["relay_status"] = "OFF"
+    return jsonify(robot_state)
+
+
 @app.route("/api/ai")
 def api_ai():
     return jsonify(latest_ai)
@@ -568,14 +799,14 @@ def index():
         <form class="inline" method="post" action="/start_mission">
             <button class="start" type="submit">Start Mission</button>
         </form>
-        <form class="inline" method="post" action="/return_home">
-            <button class="home" type="submit">Return Home</button>
-        </form>
         <form class="inline" method="post" action="/complete_mission">
             <button class="complete" type="submit">Complete Mission</button>
         </form>
         <form class="inline" method="post" action="/abort_mission">
             <button class="abort" type="submit">Abort Mission</button>
+        </form>
+        <form class="inline" method="post" action="/return_home">
+            <button class="home" type="submit">Return Home</button>
         </form>
 
         <h3>Robot State</h3>
@@ -583,6 +814,40 @@ def index():
         <p><b>Current Mission:</b> {{ robot_state.current_mission_id }}</p>
         <p><b>Current Pose:</b> {{ robot_state.current_pose }}</p>
         <p><b>Home Pose:</b> {{ robot_state.home_pose }}</p>
+    </div>
+
+    <div class="section">
+        <h2>Robot Control</h2>
+        <div id="robot-control-status">
+            <p><b>Mode:</b> <span id="control-mode">{{ robot_state.mode }}</span></p>
+            <p><b>Mission Active:</b> <span id="mission-active">{{ robot_state.mission_active }}</span></p>
+            <p><b>Emergency Stop:</b> <span id="emergency-stop">{{ robot_state.emergency_stop }}</span></p>
+            <p><b>Last Command:</b> <span id="last-command">{{ robot_state.last_command }}</span></p>
+            <p><b>Relay Status:</b> <span id="relay-status">{{ robot_state.relay_status }}</span></p>
+        </div>
+
+        <h3>Mission Control Buttons</h3>
+        <button class="start" onclick="startMission()">Start Mission</button>
+        <button class="complete" onclick="stopMission()">Stop Mission</button>
+        <button class="abort" onclick="emergencyStop()">Emergency Stop</button>
+
+        <h3>Mode Switching</h3>
+        <button class="home" onclick="switchToManual()">Switch to Manual Control</button>
+        <button class="home" onclick="switchToAuto()">Switch to Auto Mode</button>
+
+        <h3>Manual Control</h3>
+        <p class="muted">Manual controls only work when mode is MANUAL.</p>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 300px;">
+            <div></div>
+            <button id="btn-fwd" class="start" onclick="manualForward()" disabled>▲ Forward</button>
+            <div></div>
+            <button id="btn-left" class="home" onclick="manualLeft()" disabled>◄ Left</button>
+            <button id="btn-stop" class="abort" onclick="manualStop()">■ Stop</button>
+            <button id="btn-right" class="home" onclick="manualRight()" disabled>Right ►</button>
+            <div></div>
+            <button id="btn-back" class="start" onclick="manualBackward()" disabled>▼ Backward</button>
+            <div></div>
+        </div>
     </div>
 
     <div class="section">
@@ -772,6 +1037,93 @@ def index():
     }
 
     setInterval(refreshAIStatus, 1000);
+
+    // Robot Control Functions
+    function startMission() {
+        fetch('/api/mission/start', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function stopMission() {
+        fetch('/api/mission/stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function emergencyStop() {
+        fetch('/api/mission/emergency_stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function switchToManual() {
+        fetch('/api/mode/manual', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function switchToAuto() {
+        fetch('/api/mode/auto', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function manualForward() {
+        fetch('/api/manual/forward', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data))
+            .catch(err => alert('Manual control is disabled. Switch to Manual Control first.'));
+    }
+
+    function manualBackward() {
+        fetch('/api/manual/backward', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data))
+            .catch(err => alert('Manual control is disabled. Switch to Manual Control first.'));
+    }
+
+    function manualLeft() {
+        fetch('/api/manual/left', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data))
+            .catch(err => alert('Manual control is disabled. Switch to Manual Control first.'));
+    }
+
+    function manualRight() {
+        fetch('/api/manual/right', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data))
+            .catch(err => alert('Manual control is disabled. Switch to Manual Control first.'));
+    }
+
+    function manualStop() {
+        fetch('/api/manual/stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }
+
+    function updateRobotStatus(data) {
+        document.getElementById('control-mode').textContent = data.mode || 'IDLE';
+        document.getElementById('mission-active').textContent = data.mission_active || false;
+        document.getElementById('emergency-stop').textContent = data.emergency_stop || false;
+        document.getElementById('last-command').textContent = data.last_command || 'STOP';
+        document.getElementById('relay-status').textContent = data.relay_status || 'OFF';
+
+        // Enable/disable manual control buttons based on mode
+        const isManual = data.mode === 'MANUAL';
+        document.getElementById('btn-fwd').disabled = !isManual;
+        document.getElementById('btn-back').disabled = !isManual;
+        document.getElementById('btn-left').disabled = !isManual;
+        document.getElementById('btn-right').disabled = !isManual;
+    }
+
+    // Refresh robot status periodically
+    setInterval(function() {
+        fetch('/api/robot/status')
+            .then(r => r.json())
+            .then(data => updateRobotStatus(data));
+    }, 2000);
 </script>
 
 </body>

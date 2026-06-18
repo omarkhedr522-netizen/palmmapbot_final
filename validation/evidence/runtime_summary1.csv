@@ -1,0 +1,2 @@
+run_id,mission_id,input_images,detections,unique_trees,db_records,duplicates_avoided,detection_time_s,association_time_s,db_write_time_s,export_time_s,total_time_s,throughput_img_s,geojson_path,sqlite_db_path
+R01,9,24,24,5,24,19,0.48,0.14,0.0,0.1,0.72,33.39,output/palm_trees.geojson,data/palms.db

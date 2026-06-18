@@ -1,0 +1,56 @@
+PalmMapBot Q1 Minimum Validation Package
+==================================================
+Validation Date: 2026-05-20T21:13:46.132290
+
+EXPERIMENT RESULTS SUMMARY
+------------------------------
+
+E1: Palm Detection Metrics
+  Model: N/A
+  F1 Score: N/A
+  mAP@0.5: N/A
+  FPS: N/A
+
+E2: Tree-ID Association
+  Total Observations: 25
+  Correct ID Rate: 100.00%
+  Duplicate Rate: 0.00%
+  Unique Trees: 5
+
+E3: Mapping Accuracy
+  Reference Trees: 10
+  Mean Error: 0.068 m
+  RMSE: 0.068 m
+  Max Error: 0.068 m
+  % ≤ 1m: 100.0%
+
+E4: End-to-End Runtime
+  Images Processed: 24
+  Total Time: 0.72 s
+  Throughput: 33.39 img/s
+
+E5: GIS Validation
+  Feature Count: 3
+  Valid: Yes
+  Issues: None
+
+EVIDENCE FILES GENERATED
+------------------------------
+  Output Directory: validation\evidence
+  - detection_metrics.csv
+  - treeid_observations.csv
+  - mapping_error_analysis.csv
+  - runtime_summary.csv
+  - gis_validation.csv
+  - validation_summary.txt (this file)
+
+NEXT STEPS
+------------------------------
+1. Replace placeholder values with actual experimental results
+2. Run YOLO validation: python val.py --weights models/palm_tree_detector.pt --data dataset/data.yaml
+3. Collect real mapping reference points with GPS/RTK
+4. Fill workbook: PalmMapBot_Q1_Experiment_SOP_Workbook_REAL_RESULTS_v1.0.xlsx
+5. Take screenshots of dashboard and GIS exports
+6. Zip entire validation package
+
+==================================================

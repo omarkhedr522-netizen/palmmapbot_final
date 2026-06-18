@@ -1,0 +1,88 @@
+================================================================================
+PalmMapBot YOLOv8n-palm Model Information
+================================================================================
+
+Model Architecture: YOLOv8n (You Only Look Once v8 nano)
+Task: Object Detection (Single Class)
+Class: palm_tree
+
+--------------------------------------------------------------------------------
+Model Specifications
+--------------------------------------------------------------------------------
+
+Input Size:        640x640 pixels
+Backbone:          CSPDarknet (modified for nano variant)
+Neck:              PANet (Path Aggregation Network)
+Head:              Decoupled detection head
+Parameters:        ~3.0 million (approximate for YOLOv8n)
+Model Size:        6.2 MB (best.pt)
+
+--------------------------------------------------------------------------------
+Training Configuration
+--------------------------------------------------------------------------------
+
+Epochs:            100
+Batch Size:        16
+Image Size:        640
+Optimizer:         AdamW (default YOLOv8)
+Learning Rate:     0.01 (default, with scheduler)
+Data Augmentation: Mosaic, MixUp, HSV augmentation (default YOLOv8)
+
+--------------------------------------------------------------------------------
+Dataset Summary
+--------------------------------------------------------------------------------
+
+Training Images:   489
+Validation Images: 20
+Total Images:      509
+Class:             palm_tree (single class)
+Annotation Format: YOLO bounding box format
+
+--------------------------------------------------------------------------------
+Validation Results
+--------------------------------------------------------------------------------
+
+Precision:         0.6355
+Recall:            0.4500
+F1 Score:          0.5269
+mAP@0.5:           0.5044
+mAP@0.5:0.95:      0.1318
+Inference Time:    108.4 ms
+FPS:               9.2
+
+Hardware:          Intel Core i7-8550U CPU (no GPU)
+
+--------------------------------------------------------------------------------
+Model Files
+--------------------------------------------------------------------------------
+
+Primary Model:     models/palm_tree_detector.pt (PyTorch format)
+NCNN Export:       models/palm_tree_detector_ncnn_model/
+                   - model.ncnn.param
+                   - model.ncnn.bin
+                   - metadata.yaml
+
+--------------------------------------------------------------------------------
+Usage Notes
+--------------------------------------------------------------------------------
+
+1. The model is trained for aerial/top-down palm tree detection
+2. Confidence threshold: 0.25 (default for logging detections)
+3. The model performs best on clear, unobstructed palm tree views
+4. Lower recall (0.45) indicates some palm trees may be missed
+5. For edge deployment, use the NCNN format for better performance
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+
+Model trained using Ultralytics YOLOv8:
+https://github.com/ultralytics/ultralytics
+
+Dataset: PalmMapBot Palm Tree Detection Dataset
+Project: PalmMapBot - Automatic Palm Tree Detection and Mapping
+Date: 2026-05-20
+
+================================================================================
+END OF MODEL INFORMATION
+================================================================================
