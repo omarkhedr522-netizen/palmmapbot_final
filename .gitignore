@@ -1,24 +1,47 @@
-# Virtual environment
-palm_env/
+# Large data files
+data/tree_binary/
+*.pt
+*.onnx
+*.h5
+*.pkl
+*.joblib
 
-# Python cache
+# Model files
+models/
+
+# Validation assets (large images)
+validation_assets/*.png
+validation_assets/*.jpg
+validation_assets/*.jpeg
+validation_assets/*.sqlite
+validation_assets/*.geojson
+validation_assets/*.csv
+
+# Captured frames
+captured_frames/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
 
-# Database
-data/palms.db
-
-# Datasets
-dataset/images/
-dataset/labels/
-dataset/unlabeled/
-dataset/Palm Trees/
-
-# Trained models and outputs
-runs/
-output/
-
-# OS/editor files
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
