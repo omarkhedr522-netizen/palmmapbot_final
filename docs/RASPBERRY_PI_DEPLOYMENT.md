@@ -22,14 +22,16 @@ See `docs/ROBOT_CONTROL_README.md` for detailed wiring diagrams.
 
 ## Software Installation
 
-### 1. Update System
+### Option A: Using Git (Recommended)
+
+#### 1. Update System
 ```bash
 sudo apt update
 sudo apt upgrade -y
 sudo reboot
 ```
 
-### 2. Install System Dependencies
+#### 2. Install System Dependencies
 ```bash
 sudo apt install -y \
     python3-pip \
@@ -51,35 +53,43 @@ sudo apt install -y \
     libpng-dev
 ```
 
-### 3. Enable I2C for MPU6050
+#### 3. Enable I2C for MPU6050
 ```bash
 sudo raspi-config
 # Navigate to: Interface Options → I2C → Enable
 sudo reboot
 ```
 
-### 4. Clone and Setup Project
+#### 4. Clone Repository
 ```bash
 cd ~
 git clone <your-repo-url> PalmMapBot
 cd PalmMapBot/Palmmapbot
+```
 
-# Create virtual environment
+#### 5. Setup Virtual Environment
+```bash
 python3 -m venv venv
 source venv/bin/activate
-
-# Upgrade pip
 pip install --upgrade pip
 ```
 
-### 5. Install Python Dependencies
+#### 6. Install Python Dependencies
 ```bash
-# Install main requirements
 pip install -r requirements-robot-control.txt
-
-# If you have additional requirements files:
-pip install -r requirements.txt
 ```
+
+### Option B: Using Setup Script
+
+If you copied the project files manually, run the setup script:
+
+```bash
+cd ~/Palmmapbot
+chmod +x setup_raspberry_pi.sh
+./setup_raspberry_pi.sh
+```
+
+This automates all the steps above.
 
 ### 6. Create Required Directories
 ```bash
