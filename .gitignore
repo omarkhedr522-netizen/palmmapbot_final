@@ -1,47 +1,110 @@
-# Large data files
+# ============================================
+# FILES TO EXCLUDE (Not needed for runtime)
+# ============================================
+
+# Training data (very large, not needed for runtime)
 data/tree_binary/
-*.pt
-*.onnx
-*.h5
-*.pkl
-*.joblib
+dataset/
 
-# Model files
-models/
-
-# Validation assets (large images)
+# Validation outputs (large, not needed for runtime)
 validation_assets/*.png
 validation_assets/*.jpg
 validation_assets/*.jpeg
 validation_assets/*.sqlite
 validation_assets/*.geojson
-validation_assets/*.csv
+validation_assets/evidence/
 
-# Captured frames
+# Captured frames (runtime generated)
 captured_frames/
 
-# Python
+# Output directories (runtime generated)
+output/
+runs/
+
+# ============================================
+# PYTHON
+# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 venv/
+ENV/
 env/
 .venv/
 
-# IDE
+# ============================================
+# IDE & EDITORS
+# ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
+.settings/
 
+# ============================================
 # OS
+# ============================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Logs
+# ============================================
+# LOGS & TEMP
+# ============================================
 *.log
+*.tmp
+*.temp
 
-# Environment
+# ============================================
+# ENVIRONMENT
+# ============================================
 .env
+*.env.local
+*.env.*.local
+
+# ============================================
+# TESTING
+# ============================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ============================================
+# JUPYTER
+# ============================================
+.ipynb_checkpoints
+
+# ============================================
+# MYPY
+# ============================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
