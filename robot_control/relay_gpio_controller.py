@@ -6,7 +6,12 @@ Raspberry Pi GPIO relay controller for PalmMapBot.
 This module directly controls a 4-channel relay module through Raspberry Pi GPIO pins.
 It replaces the old Arduino serial controller.
 
-Relay GPIO Mapping (BCM numbering) - UPDATED:
+CRITICAL SAFETY NOTE:
+- Relay module is ACTIVE LOW (GPIO LOW = relay ON, GPIO HIGH = relay OFF)
+- All relays MUST be OFF (HIGH) at startup to prevent accidental movement
+- The robot must NEVER move when the dashboard starts
+
+Relay GPIO Mapping (BCM numbering):
 - Forward relay = GPIO 22
 - Backward relay = GPIO 23
 - Left relay = GPIO 27
@@ -41,11 +46,26 @@ import threading
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Default GPIO pins (BCM numbering) - CORRECTED
+# Default GPIO pins (BCM numbering)
 GPIO_FORWARD = 22
 GPIO_BACKWARD = 23
 GPIO_LEFT = 27
 GPIO_RIGHT = 17
+
+# =============================================================================
+# Relay Active Level Constants
+# =============================================================================
+# CRITICAL: Most relay modules are ACTIVE LOW
+# - GPIO LOW (0V) = Relay ON (circuit closed, car can move)
+# - GPIO HIGH (3.3V) = Relay OFF (circuit open, car stopped)
+#
+# For safety, we define clear constants to avoid confusion:
+RELAY_ON = False   # For gpiozero: False = pin LOW = relay ON (active LOW)
+RELAY_OFF = True   # For gpiozero: True = pin HIGH = relay OFF (active LOW)
+
+# For RPi.GPIO:
+# RELAY_ON = GPIO.LOW
+# RELAY_OFF = GPIO.HIGH
 
 # Try to import GPIO libraries
 RELAY_CONTROLLER = None
@@ -75,10 +95,11 @@ class RelayGPIOController:
     Raspberry Pi GPIO relay controller with safe state management.
     
     This controller ensures:
-    - All relays are OFF by default at startup
+    - All relays are OFF by default at startup (CRITICAL SAFETY)
     - Only one direction is active at a time
     - Safe stop function cuts all relay inputs
     - Thread-safe operations with locks
+    - Active LOW relay logic (LOW = ON, HIGH = OFF)
     """
     
     def __init__(self, forward_pin=GPIO_FORWARD, backward_pin=GPIO_BACKWARD,
@@ -111,7 +132,12 @@ class RelayGPIOController:
         self._setup_gpio()
         
     def _setup_gpio(self):
-        """Set up GPIO pins for relay control. All relays start OFF."""
+        """
+        Set up GPIO pins for relay control.
+        
+        CRITICAL: All relays MUST start OFF to prevent accidental movement.
+        For active LOW relays: OFF = HIGH = gpiozero initial_value=True
+        """
         if not GPIO_AVAILABLE:
             logger.warning("GPIO not available - using dummy mode")
             return
@@ -119,17 +145,26 @@ class RelayGPIOController:
         try:
             if RELAY_CONTROLLER == "gpiozero":
                 # gpiozero uses LED class for simple on/off control
-                # initial_value=False ensures relays start OFF
-                self.forward_relay = LED(self.forward_pin, initial_value=False)
-                self.backward_relay = LED(self.backward_pin, initial_value=False)
-                self.left_relay = LED(self.left_pin, initial_value=False)
-                self.right_relay = LED(self.right_pin, initial_value=False)
+                # CRITICAL: For active LOW relays:
+                # - initial_value=True means pin HIGH = relay OFF (safe!)
+                # - initial_value=False means pin LOW = relay ON (dangerous!)
+                # We want OFF at startup, so use initial_value=True for active LOW
+                if self.active_low:
+                    self.forward_relay = LED(self.forward_pin, initial_value=True)
+                    self.backward_relay = LED(self.backward_pin, initial_value=True)
+                    self.left_relay = LED(self.left_pin, initial_value=True)
+                    self.right_relay = LED(self.right_pin, initial_value=True)
+                else:
+                    self.forward_relay = LED(self.forward_pin, initial_value=False)
+                    self.backward_relay = LED(self.backward_pin, initial_value=False)
+                    self.left_relay = LED(self.left_pin, initial_value=False)
+                    self.right_relay = LED(self.right_pin, initial_value=False)
                 
             elif RELAY_CONTROLLER == "RPi.GPIO":
                 # RPi.GPIO setup
                 GPIO.setmode(GPIO.BCM)
                 GPIO.setwarnings(False)
-                # initial=GPIO.HIGH means OFF for active-low relays
+                # initial=GPIO.HIGH means OFF for active LOW relays
                 GPIO.setup(self.forward_pin, GPIO.OUT, initial=GPIO.HIGH)
                 GPIO.setup(self.backward_pin, GPIO.OUT, initial=GPIO.HIGH)
                 GPIO.setup(self.left_pin, GPIO.OUT, initial=GPIO.HIGH)
@@ -138,7 +173,10 @@ class RelayGPIOController:
             self.initialized = True
             logger.info(f"Relay GPIO initialized: FWD={self.forward_pin}, BACK={self.backward_pin}, "
                        f"LEFT={self.left_pin}, RIGHT={self.right_pin}")
-            logger.info("All relays set to OFF (safe default state)")
+            logger.info("All relays set to OFF (safe default state) - active_low={}".format(self.active_low))
+            
+            # Double-check: explicitly turn all relays OFF after setup
+            self.stop_all_relays()
             
         except Exception as e:
             logger.error(f"GPIO setup failed: {e}")
@@ -154,6 +192,8 @@ class RelayGPIOController:
         - GPIO 23 OFF (backward)
         - GPIO 27 OFF (left)
         - GPIO 17 OFF (right)
+        
+        For active LOW relays: OFF = HIGH
         """
         with self._lock:
             if not self.initialized:
@@ -161,16 +201,18 @@ class RelayGPIOController:
                 
             try:
                 if RELAY_CONTROLLER == "gpiozero":
+                    # For active LOW: OFF = True (pin HIGH)
+                    # For active HIGH: OFF = False (pin LOW)
                     if self.forward_relay:
-                        self.forward_relay.off()
+                        self.forward_relay.value = RELAY_OFF if self.active_low else RELAY_ON
                     if self.backward_relay:
-                        self.backward_relay.off()
+                        self.backward_relay.value = RELAY_OFF if self.active_low else RELAY_ON
                     if self.left_relay:
-                        self.left_relay.off()
+                        self.left_relay.value = RELAY_OFF if self.active_low else RELAY_ON
                     if self.right_relay:
-                        self.right_relay.off()
+                        self.right_relay.value = RELAY_OFF if self.active_low else RELAY_ON
                 elif RELAY_CONTROLLER == "RPi.GPIO":
-                    # HIGH = OFF for active-low relays
+                    # HIGH = OFF for active LOW relays
                     GPIO.output(self.forward_pin, GPIO.HIGH)
                     GPIO.output(self.backward_pin, GPIO.HIGH)
                     GPIO.output(self.left_pin, GPIO.HIGH)
@@ -289,14 +331,15 @@ class RelayGPIOController:
     def _deactivate_all(self):
         """Internal: Deactivate all relays (must be called with lock held)."""
         if RELAY_CONTROLLER == "gpiozero":
+            off_value = RELAY_OFF if self.active_low else RELAY_ON
             if self.forward_relay:
-                self.forward_relay.off()
+                self.forward_relay.value = off_value
             if self.backward_relay:
-                self.backward_relay.off()
+                self.backward_relay.value = off_value
             if self.left_relay:
-                self.left_relay.off()
+                self.left_relay.value = off_value
             if self.right_relay:
-                self.right_relay.off()
+                self.right_relay.value = off_value
         elif RELAY_CONTROLLER == "RPi.GPIO":
             GPIO.output(self.forward_pin, GPIO.HIGH)
             GPIO.output(self.backward_pin, GPIO.HIGH)
@@ -306,14 +349,28 @@ class RelayGPIOController:
     def _activate_relay_only(self, direction):
         """Internal: Activate only the specified relay (must be called with lock held)."""
         if RELAY_CONTROLLER == "gpiozero":
+            on_value = RELAY_ON if self.active_low else RELAY_OFF
+            off_value = RELAY_OFF if self.active_low else RELAY_ON
+            
+            # First set all to OFF
+            if self.forward_relay:
+                self.forward_relay.value = off_value
+            if self.backward_relay:
+                self.backward_relay.value = off_value
+            if self.left_relay:
+                self.left_relay.value = off_value
+            if self.right_relay:
+                self.right_relay.value = off_value
+            
+            # Then set only the desired relay to ON
             if direction == "forward" and self.forward_relay:
-                self.forward_relay.on()
+                self.forward_relay.value = on_value
             elif direction == "backward" and self.backward_relay:
-                self.backward_relay.on()
+                self.backward_relay.value = on_value
             elif direction == "left" and self.left_relay:
-                self.left_relay.on()
+                self.left_relay.value = on_value
             elif direction == "right" and self.right_relay:
-                self.right_relay.on()
+                self.right_relay.value = on_value
         elif RELAY_CONTROLLER == "RPi.GPIO":
             # First set all to HIGH (OFF)
             GPIO.output(self.forward_pin, GPIO.HIGH)
@@ -440,6 +497,7 @@ if __name__ == "__main__":
     print("Relay GPIO Controller Test")
     print("=" * 60)
     print(f"GPIO Pins: FWD={GPIO_FORWARD}, BACK={GPIO_BACKWARD}, LEFT={GPIO_LEFT}, RIGHT={GPIO_RIGHT}")
+    print(f"Active LOW: True (LOW=ON, HIGH=OFF)")
     print()
     
     if not GPIO_AVAILABLE:
@@ -450,10 +508,13 @@ if __name__ == "__main__":
     controller = RelayGPIOController()
     
     try:
-        print("\nTest 1: Initial State (should be STOP)")
+        print("\nTest 1: Initial State (should be STOP, all relays OFF)")
         print(f"  Current state: {controller.get_current_state()}")
+        status = controller.get_status()
+        print(f"  Initialized: {status['initialized']}")
+        print(f"  Active Low: {status['active_low']}")
         
-        print("\nTest 2: STOP")
+        print("\nTest 2: STOP (verify all relays OFF)")
         controller.stop_all_relays()
         time.sleep(0.5)
         print("  STOP sent - all relays OFF")
