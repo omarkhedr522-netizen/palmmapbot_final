@@ -16,16 +16,18 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 CAPTURED_FRAMES_DIR = os.path.join(PROJECT_ROOT, "captured_frames")
 
 # Database
-DB_PATH = os.path.join(DATA_DIR, "palmmapbot.db")
+DB_PATH = os.path.join(DATA_DIR, "palms.db")
 
 # =============================================================================
 # GPIO Configuration (Raspberry Pi BCM numbering)
 # =============================================================================
+# IMPORTANT: These pin assignments must match the physical wiring!
+# Relay module is active LOW (GPIO LOW = relay ON, GPIO HIGH = relay OFF)
 
-GPIO_FORWARD = 17
-GPIO_BACKWARD = 27
-GPIO_LEFT = 22
-GPIO_RIGHT = 23
+GPIO_FORWARD = 22   # Forward relay - GPIO 22
+GPIO_BACKWARD = 23  # Backward relay - GPIO 23
+GPIO_LEFT = 27      # Left relay - GPIO 27
+GPIO_RIGHT = 17     # Right relay - GPIO 17
 GPIO_ACTIVE_LOW = True  # Most relay modules are active low
 
 # =============================================================================

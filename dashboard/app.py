@@ -17,8 +17,12 @@ from flask import Flask, jsonify, redirect, url_for, Response, render_template_s
 
 from backend.controller_instance import controller
 
-# Import robot control modules for relay GPIO control
-from robot_control.relay_gpio_controller import RelayGPIOController, get_relay_controller, stop_all, cleanup_all
+# Import centralized robot state manager for thread-safe relay control
+from robot_control.robot_state_manager import (
+    get_robot_state_manager, 
+    RobotStateManager,
+    stop_all_relays
+)
 
 # --- Optional sensor imports: keep dashboard alive even if a sensor stack fails ---
 LIDAR_IMPORT_ERROR = None
@@ -94,34 +98,17 @@ except Exception as e:
 DB_PATH = os.path.join(BASE_DIR, "data", "palms.db")
 MODEL_PATH = os.path.join(BASE_DIR, "models", "palm_tree_detector_ncnn_model")
 
-# Robot control state
-robot_state = {
-    "mode": "IDLE",  # IDLE, AUTO, MANUAL, STOPPED, ERROR, EMERGENCY_STOP
-    "mission_active": False,
-    "emergency_stop": False,
-    "last_command": "STOP",
-    "relay_status": "OFF",
-    "binary_tree_detected": False,
-    "binary_tree_confidence": 0.0,
-    "lidar_distance": None,
-    "lidar_valid": False,
-    "gps_valid": False,
-    "last_tree_id": None,
-    "error": None
-}
+# Robot state manager (centralized, thread-safe)
+robot_state_manager = None
 
-# Relay controller instance
-_relay_ctrl = None
-
-def get_robot_relay_controller():
-    """Get or create robot relay controller."""
-    global _relay_ctrl
-    if _relay_ctrl is None:
-        try:
-            _relay_ctrl = RelayGPIOController()
-        except Exception as e:
-            robot_state["error"] = f"Relay controller init failed: {e}"
-    return _relay_ctrl
+def get_state_manager():
+    """Get or initialize the robot state manager."""
+    global robot_state_manager
+    if robot_state_manager is None:
+        robot_state_manager = get_robot_state_manager()
+        # Initialize relay controller (ensures all relays start OFF)
+        robot_state_manager.initialize_relay_controller()
+    return robot_state_manager
 
 PALM_CONF_TH = float(os.getenv("PALM_CONF_TH", "0.25"))
 PALM_LOG_COOLDOWN = float(os.getenv("PALM_LOG_COOLDOWN", "4.0"))
@@ -424,6 +411,10 @@ def ai_worker_loop():
         time.sleep(AI_INTERVAL)
 
 
+# ===========================================================================
+# API Endpoints - Using centralized RobotStateManager
+# ===========================================================================
+
 @app.route("/start_mission", methods=["POST"])
 def start_mission():
     controller.start_mission(
@@ -445,7 +436,10 @@ def complete_mission():
 
 @app.route("/abort_mission", methods=["POST"])
 def abort_mission():
-    controller.abort_mission()
+    # Use centralized state manager for immediate abort
+    state_mgr = get_state_manager()
+    state_mgr.abort_mission()
+    print("ABORT MISSION - All relays OFF")
     return redirect(url_for("index"))
 
 
@@ -488,202 +482,171 @@ def api_sensors():
     })
 
 
-# Robot Control API Endpoints
+# ===========================================================================
+# Robot Control API Endpoints - Using centralized RobotStateManager
+# ===========================================================================
+
 @app.route("/api/robot/status")
 def api_robot_status():
     """Get current robot control status."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        robot_state["relay_status"] = relay_ctrl.get_status()
-    return jsonify(robot_state)
+    state_mgr = get_state_manager()
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/mission/start", methods=["POST"])
 def api_mission_start():
-    """Start automatic mission."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["emergency_stop"] = False
-    robot_state["mission_active"] = True
-    robot_state["mode"] = "AUTO"
-    robot_state["last_command"] = "FORWARD"
-    if relay_ctrl:
-        relay_ctrl.forward()
-    robot_state["relay_status"] = "FORWARD"
-    return jsonify(robot_state)
+    """
+    Start automatic mission.
+    
+    IMPORTANT: This only sets the mission state to active.
+    The relay controller does NOT automatically activate forward.
+    Forward movement should be controlled by the mission automation loop.
+    """
+    state_mgr = get_state_manager()
+    
+    # Stop all relays first (safety)
+    state_mgr.manual_stop()
+    
+    # Clear emergency stop
+    state_mgr.start_mission()
+    
+    print("MISSION STARTED - Mode: AUTO, waiting for automation to command movement")
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/mission/stop", methods=["POST"])
 def api_mission_stop():
-    """Stop mission."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["mission_active"] = False
-    robot_state["mode"] = "STOPPED"
-    robot_state["last_command"] = "STOP"
-    robot_state["relay_status"] = "OFF"
-    return jsonify(robot_state)
+    """Stop mission gracefully."""
+    state_mgr = get_state_manager()
+    state_mgr.stop_mission()
+    print("MISSION STOPPED - All relays OFF")
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/mission/emergency_stop", methods=["POST"])
 def api_mission_emergency_stop():
-    """Emergency stop - overrides everything."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["emergency_stop"] = True
-    robot_state["mission_active"] = False
-    robot_state["mode"] = "EMERGENCY_STOP"
-    robot_state["last_command"] = "STOP"
-    robot_state["relay_status"] = "OFF"
-    return jsonify(robot_state)
+    """
+    Emergency stop - overrides everything.
+    
+    This is the highest priority stop command.
+    Immediately cuts all relay inputs.
+    """
+    state_mgr = get_state_manager()
+    state_mgr.abort_mission()
+    print("EMERGENCY STOP - All relays OFF")
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/mode/manual", methods=["POST"])
 def api_mode_manual():
     """Switch to manual control mode."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["mission_active"] = False
-    robot_state["mode"] = "MANUAL"
-    robot_state["last_command"] = "STOP"
-    robot_state["relay_status"] = "OFF"
-    return jsonify(robot_state)
+    state_mgr = get_state_manager()
+    state_mgr.switch_to_manual()
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/mode/auto", methods=["POST"])
 def api_mode_auto():
     """Switch to auto mode (ready, not moving)."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["mission_active"] = False
-    robot_state["mode"] = "IDLE"
-    robot_state["last_command"] = "STOP"
-    robot_state["relay_status"] = "OFF"
-    return jsonify(robot_state)
+    state_mgr = get_state_manager()
+    state_mgr.switch_to_auto()
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/manual/forward", methods=["POST"])
 def api_manual_forward():
-    """Manual forward - only works in MANUAL mode."""
-    if robot_state["mode"] != "MANUAL":
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
+    """
+    Manual forward - only works in MANUAL mode.
+    
+    Activates ONLY GPIO 22 (forward relay).
+    All other relays remain OFF.
+    """
+    state_mgr = get_state_manager()
+    result = state_mgr.manual_forward()
+    
+    if not result:
+        state = state_mgr.get_state()
         return jsonify({
             "error": "Manual control is disabled. Switch to Manual Control first.",
-            "mode": robot_state["mode"]
+            "mode": state["mode"]
         }), 400
-    if robot_state["emergency_stop"]:
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
-        return jsonify({
-            "error": "Emergency stop is active. Reset first.",
-            "mode": robot_state["mode"]
-        }), 400
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.forward()
-    robot_state["last_command"] = "FORWARD"
-    robot_state["relay_status"] = "FORWARD"
-    return jsonify(robot_state)
+    
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/manual/backward", methods=["POST"])
 def api_manual_backward():
-    """Manual backward - only works in MANUAL mode."""
-    if robot_state["mode"] != "MANUAL":
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
+    """
+    Manual backward - only works in MANUAL mode.
+    
+    Activates ONLY GPIO 23 (backward relay).
+    All other relays remain OFF.
+    """
+    state_mgr = get_state_manager()
+    result = state_mgr.manual_backward()
+    
+    if not result:
+        state = state_mgr.get_state()
         return jsonify({
             "error": "Manual control is disabled. Switch to Manual Control first.",
-            "mode": robot_state["mode"]
+            "mode": state["mode"]
         }), 400
-    if robot_state["emergency_stop"]:
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
-        return jsonify({
-            "error": "Emergency stop is active. Reset first.",
-            "mode": robot_state["mode"]
-        }), 400
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.backward()
-    robot_state["last_command"] = "BACKWARD"
-    robot_state["relay_status"] = "BACKWARD"
-    return jsonify(robot_state)
+    
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/manual/left", methods=["POST"])
 def api_manual_left():
-    """Manual left - only works in MANUAL mode."""
-    if robot_state["mode"] != "MANUAL":
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
+    """
+    Manual left - only works in MANUAL mode.
+    
+    Activates ONLY GPIO 27 (left relay).
+    All other relays remain OFF.
+    """
+    state_mgr = get_state_manager()
+    result = state_mgr.manual_left()
+    
+    if not result:
+        state = state_mgr.get_state()
         return jsonify({
             "error": "Manual control is disabled. Switch to Manual Control first.",
-            "mode": robot_state["mode"]
+            "mode": state["mode"]
         }), 400
-    if robot_state["emergency_stop"]:
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
-        return jsonify({
-            "error": "Emergency stop is active. Reset first.",
-            "mode": robot_state["mode"]
-        }), 400
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.left()
-    robot_state["last_command"] = "LEFT"
-    robot_state["relay_status"] = "LEFT"
-    return jsonify(robot_state)
+    
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/manual/right", methods=["POST"])
 def api_manual_right():
-    """Manual right - only works in MANUAL mode."""
-    if robot_state["mode"] != "MANUAL":
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
+    """
+    Manual right - only works in MANUAL mode.
+    
+    Activates ONLY GPIO 17 (right relay).
+    All other relays remain OFF.
+    """
+    state_mgr = get_state_manager()
+    result = state_mgr.manual_right()
+    
+    if not result:
+        state = state_mgr.get_state()
         return jsonify({
             "error": "Manual control is disabled. Switch to Manual Control first.",
-            "mode": robot_state["mode"]
+            "mode": state["mode"]
         }), 400
-    if robot_state["emergency_stop"]:
-        relay_ctrl = get_robot_relay_controller()
-        if relay_ctrl:
-            relay_ctrl.stop()
-        return jsonify({
-            "error": "Emergency stop is active. Reset first.",
-            "mode": robot_state["mode"]
-        }), 400
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.right()
-    robot_state["last_command"] = "RIGHT"
-    robot_state["relay_status"] = "RIGHT"
-    return jsonify(robot_state)
+    
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/manual/stop", methods=["POST"])
 def api_manual_stop():
-    """Manual stop - works in any mode."""
-    relay_ctrl = get_robot_relay_controller()
-    if relay_ctrl:
-        relay_ctrl.stop()
-    robot_state["last_command"] = "STOP"
-    robot_state["relay_status"] = "OFF"
-    return jsonify(robot_state)
+    """
+    Manual stop - works in any mode.
+    
+    Cuts all relay inputs completely.
+    """
+    state_mgr = get_state_manager()
+    state_mgr.manual_stop()
+    return jsonify(state_mgr.get_state())
 
 
 @app.route("/api/ai")
@@ -729,7 +692,11 @@ def index():
     missions = load_missions()
     trees = load_trees()
     detections = load_detections()
-    robot_state = controller.get_state()
+    
+    # Get state from centralized manager
+    state_mgr = get_state_manager()
+    state = state_mgr.get_state()
+    
     lidar = get_lidar_data()
     gps = get_gps_data()
     ai_status = dict(latest_ai)
@@ -1133,7 +1100,7 @@ def index():
         missions=missions,
         trees=trees,
         detections=detections,
-        robot_state=robot_state,
+        robot_state=state,
         lidar=lidar,
         gps=gps,
         ai_status=ai_status,
@@ -1174,6 +1141,9 @@ def stop_all_sensors():
     _safe_stop("LiDAR", stop_lidar)
     _safe_stop("GPS", stop_gps)
     _safe_stop("Camera", stop_camera)
+    
+    # Also stop all relays
+    stop_all_relays()
 
 
 def start_ai_worker():
@@ -1191,6 +1161,15 @@ atexit.register(stop_all_sensors)
 
 
 if __name__ == "__main__":
+    # Initialize relay controller and ensure all relays are OFF at startup
+    print("=" * 60)
+    print("PalmMapBot Dashboard Starting...")
+    print("=" * 60)
+    print("Initializing relay controller...")
+    state_mgr = get_state_manager()
+    print("All relays set to OFF (safe default)")
+    print("=" * 60)
+    
     start_all_sensors()
     start_ai_worker()
     app.run(host="0.0.0.0", port=5000, debug=False)
