@@ -10,7 +10,7 @@ dataset/
 validation_assets/*.png
 validation_assets/*.jpg
 validation_assets/*.jpeg
-validation_assets/*.sqlite
+# validation_assets/*.sqlite - removed to allow database push
 validation_assets/*.geojson
 validation_assets/evidence/
 
