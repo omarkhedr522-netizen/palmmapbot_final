@@ -8,6 +8,7 @@ This module provides:
 - Centralized relay control coordination
 - Mission state tracking
 - Abort handling with immediate relay cutoff
+- Timed manual control pulses
 - Single source of truth for robot state
 
 This should be the primary interface for controlling the robot
@@ -26,6 +27,15 @@ from robot_control.relay_gpio_controller import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Manual Control Timing Constants (in seconds)
+# =============================================================================
+# These define how long each relay stays active when a manual button is pressed
+MANUAL_FORWARD_DURATION = 0.5    # Forward relay GPIO 22: 0.5 seconds
+MANUAL_BACKWARD_DURATION = 0.5   # Backward relay GPIO 23: 0.5 seconds
+MANUAL_LEFT_DURATION = 0.25      # Left relay GPIO 27: 0.25 seconds
+MANUAL_RIGHT_DURATION = 0.25     # Right relay GPIO 17: 0.25 seconds
+
 
 class RobotStateManager:
     """
@@ -37,6 +47,7 @@ class RobotStateManager:
     - Emergency stop state
     - Relay control with safe stop guarantees
     - Thread-safe state access
+    - Timed manual control pulses
     
     All state changes are protected by locks to prevent race conditions.
     """
@@ -52,6 +63,7 @@ class RobotStateManager:
         """Initialize the robot state manager."""
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self._state_lock = threading.Lock()  # Separate lock for state dict
+        self._manual_lock = threading.Lock()  # Lock for manual control timing
         
         # State variables
         self._mode = self.MODE_IDLE
@@ -62,6 +74,10 @@ class RobotStateManager:
         
         # Relay controller (singleton)
         self._relay_controller = None
+        
+        # Manual control timing thread
+        self._manual_pulse_thread = None
+        self._manual_pulse_active = False
         
         # State change callbacks
         self._state_callbacks = []
@@ -256,15 +272,56 @@ class RobotStateManager:
             self._notify_state_change()
     
     # =========================================================================
-    # Manual Control Methods
+    # Manual Control Methods - TIMED PULSES
     # =========================================================================
+    # Manual control uses timed pulses:
+    # - Forward/Backward: 0.5 seconds
+    # - Left/Right: 0.25 seconds
+    # The relay activates for the specified duration, then automatically turns off.
+    # =========================================================================
+    
+    def _manual_pulse_worker(self, direction, duration):
+        """
+        Internal worker thread for timed manual control pulses.
+        
+        Activates the specified relay for the given duration, then stops.
+        Runs in a separate thread to avoid blocking the dashboard.
+        """
+        with self._manual_lock:
+            self._manual_pulse_active = True
+        
+        try:
+            # Activate the relay
+            if direction == "forward":
+                self._relay_controller.forward()
+            elif direction == "backward":
+                self._relay_controller.backward()
+            elif direction == "left":
+                self._relay_controller.left()
+            elif direction == "right":
+                self._relay_controller.right()
+            
+            # Wait for the specified duration
+            time.sleep(duration)
+            
+            # Stop all relays
+            self._safe_stop_all()
+            logger.info(f"Manual {direction.upper()} pulse complete ({duration}s)")
+            
+        except Exception as e:
+            logger.error(f"Manual pulse worker error: {e}")
+            self._safe_stop_all()
+        finally:
+            with self._manual_lock:
+                self._manual_pulse_active = False
+                self._manual_pulse_thread = None
     
     def manual_forward(self):
         """
-        Manual forward control.
+        Manual forward control with timed pulse.
         
         Only works in MANUAL mode and when emergency stop is not active.
-        Activates ONLY GPIO 22 (forward relay).
+        Activates ONLY GPIO 22 (forward relay) for 0.5 seconds, then stops.
         """
         with self._lock:
             with self._state_lock:
@@ -276,17 +333,26 @@ class RobotStateManager:
                     return False
             
             if self._relay_controller:
-                self._relay_controller.forward()
-                logger.info("MANUAL FORWARD - GPIO 22 ON")
+                # Cancel any existing manual pulse
+                self._cancel_manual_pulse()
+                
+                # Start new timed pulse in background thread
+                self._manual_pulse_thread = threading.Thread(
+                    target=self._manual_pulse_worker,
+                    args=("forward", MANUAL_FORWARD_DURATION),
+                    daemon=True
+                )
+                self._manual_pulse_thread.start()
+                logger.info(f"MANUAL FORWARD - GPIO 22 ON for {MANUAL_FORWARD_DURATION}s")
                 return True
-            return False
+        return False
     
     def manual_backward(self):
         """
-        Manual backward control.
+        Manual backward control with timed pulse.
         
         Only works in MANUAL mode and when emergency stop is not active.
-        Activates ONLY GPIO 23 (backward relay).
+        Activates ONLY GPIO 23 (backward relay) for 0.5 seconds, then stops.
         """
         with self._lock:
             with self._state_lock:
@@ -298,17 +364,26 @@ class RobotStateManager:
                     return False
             
             if self._relay_controller:
-                self._relay_controller.backward()
-                logger.info("MANUAL BACKWARD - GPIO 23 ON")
+                # Cancel any existing manual pulse
+                self._cancel_manual_pulse()
+                
+                # Start new timed pulse in background thread
+                self._manual_pulse_thread = threading.Thread(
+                    target=self._manual_pulse_worker,
+                    args=("backward", MANUAL_BACKWARD_DURATION),
+                    daemon=True
+                )
+                self._manual_pulse_thread.start()
+                logger.info(f"MANUAL BACKWARD - GPIO 23 ON for {MANUAL_BACKWARD_DURATION}s")
                 return True
-            return False
+        return False
     
     def manual_left(self):
         """
-        Manual left turn control.
+        Manual left turn control with timed pulse.
         
         Only works in MANUAL mode and when emergency stop is not active.
-        Activates ONLY GPIO 27 (left relay).
+        Activates ONLY GPIO 27 (left relay) for 0.25 seconds, then stops.
         """
         with self._lock:
             with self._state_lock:
@@ -320,17 +395,26 @@ class RobotStateManager:
                     return False
             
             if self._relay_controller:
-                self._relay_controller.left()
-                logger.info("MANUAL LEFT - GPIO 27 ON")
+                # Cancel any existing manual pulse
+                self._cancel_manual_pulse()
+                
+                # Start new timed pulse in background thread
+                self._manual_pulse_thread = threading.Thread(
+                    target=self._manual_pulse_worker,
+                    args=("left", MANUAL_LEFT_DURATION),
+                    daemon=True
+                )
+                self._manual_pulse_thread.start()
+                logger.info(f"MANUAL LEFT - GPIO 27 ON for {MANUAL_LEFT_DURATION}s")
                 return True
-            return False
+        return False
     
     def manual_right(self):
         """
-        Manual right turn control.
+        Manual right turn control with timed pulse.
         
         Only works in MANUAL mode and when emergency stop is not active.
-        Activates ONLY GPIO 17 (right relay).
+        Activates ONLY GPIO 17 (right relay) for 0.25 seconds, then stops.
         """
         with self._lock:
             with self._state_lock:
@@ -342,18 +426,36 @@ class RobotStateManager:
                     return False
             
             if self._relay_controller:
-                self._relay_controller.right()
-                logger.info("MANUAL RIGHT - GPIO 17 ON")
+                # Cancel any existing manual pulse
+                self._cancel_manual_pulse()
+                
+                # Start new timed pulse in background thread
+                self._manual_pulse_thread = threading.Thread(
+                    target=self._manual_pulse_worker,
+                    args=("right", MANUAL_RIGHT_DURATION),
+                    daemon=True
+                )
+                self._manual_pulse_thread.start()
+                logger.info(f"MANUAL RIGHT - GPIO 17 ON for {MANUAL_RIGHT_DURATION}s")
                 return True
-            return False
+        return False
+    
+    def _cancel_manual_pulse(self):
+        """Cancel any active manual pulse."""
+        with self._manual_lock:
+            if self._manual_pulse_active:
+                self._safe_stop_all()
+                self._manual_pulse_active = False
+                logger.info("Manual pulse cancelled")
     
     def manual_stop(self):
         """
         Manual stop - works in any mode.
         
-        Stops all relays immediately.
+        Stops all relays immediately and cancels any active manual pulse.
         """
         with self._lock:
+            self._cancel_manual_pulse()
             self._safe_stop_all()
             logger.info("MANUAL STOP - All relays OFF")
             self._notify_state_change()
@@ -368,6 +470,7 @@ class RobotStateManager:
         
         Only works when mission is active and no abort/emergency.
         Activates ONLY GPIO 22 (forward relay).
+        Unlike manual control, this stays active until explicitly stopped.
         """
         with self._lock:
             with self._state_lock:
@@ -385,7 +488,7 @@ class RobotStateManager:
                 self._relay_controller.forward()
                 logger.info("AUTO FORWARD - GPIO 22 ON")
                 return True
-            return False
+        return False
     
     def auto_stop(self):
         """
@@ -449,6 +552,7 @@ class RobotStateManager:
         """
         with self._lock:
             self._running = False
+            self._cancel_manual_pulse()
             self._safe_stop_all()
             
             with self._state_lock:
